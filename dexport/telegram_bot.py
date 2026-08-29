@@ -703,9 +703,10 @@ class TelegramBotDaemon:
                         since=since,
                         until=until,
                         text_query=query,
-                        limit=limit,
-                        scan_depth=1500,
+                        limit=max(limit, 500) if since else limit,
+                        scan_depth=50000,
                     )
+
 
                 if not messages:
                     await self.bot.send_message(chat_id, f"⚠️ No messages found matching criteria in #{channel_name}.")

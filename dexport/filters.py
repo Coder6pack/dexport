@@ -53,20 +53,34 @@ def parse_datetime_input(val: Optional[str]) -> Optional[datetime]:
         "%d/%m/%Y %H:%M:%S",
         "%d/%m/%Y %H:%M",
         "%d/%m/%Y",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y %H:%M",
+        "%d-%m-%Y",
+        "%d.%m.%Y %H:%M:%S",
+        "%d.%m.%Y %H:%M",
+        "%d.%m.%Y",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
         "%Y/%m/%d",
+        "%m/%d/%Y",
+        "%m-%d-%Y",
+        "%d/%m",
+        "%d-%m",
     ]
 
     for fmt in formats:
         try:
             dt = datetime.strptime(val, fmt)
-            # Localize to current timezone
+            if "%Y" not in fmt and "%y" not in fmt:
+                dt = dt.replace(year=now.year)
             return dt.astimezone()
         except ValueError:
             continue
 
     raise ValueError(
-        f"Không thể nhận diện định dạng ngày giờ '{val}'. Hỗ trợ: 'today', 'yesterday', '3d', '24h', 'YYYY-MM-DD', 'DD/MM/YYYY'."
+        f"Unable to parse date/time '{val}'. Supported: 'today', 'yesterday', '3d', '7d', '24h', 'YYYY-MM-DD', 'DD/MM/YYYY', 'DD-MM-YYYY'."
     )
+
 
 
 def filter_messages(

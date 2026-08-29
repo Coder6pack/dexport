@@ -324,7 +324,9 @@ class DiscordClient:
         matched: List[Dict[str, Any]] = []
         resolved_user: Optional[Dict[str, Any]] = None
         current_before = None
-        remaining_scan = scan_depth
+        max_scan = max(scan_depth, 50000) if since_dt else scan_depth
+        remaining_scan = max_scan
+
 
         while remaining_scan > 0 and len(matched) < limit:
             batch_size = min(remaining_scan, 100)

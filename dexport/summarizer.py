@@ -19,6 +19,29 @@ from rich.markdown import Markdown
 
 from .exporter import parse_timestamp
 
+def _ensure_env():
+    env_paths = [
+        os.path.expanduser("~/.dexport.env"),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
+    ]
+    for p in env_paths:
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k = k.strip()
+                            v = v.strip().strip('"').strip("'")
+                            if k and not os.environ.get(k):
+                                os.environ[k] = v
+            except Exception:
+                pass
+
+_ensure_env()
+
+
 
 def extract_keywords(texts: List[str], top_n: int = 10) -> List[Tuple[str, int]]:
     """Extract most frequent significant words from user messages."""
@@ -199,23 +222,30 @@ def _call_openai_compatible(
         "temperature": 0.3,
     }
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            choices = data.get("choices", [])
-            if choices:
-                return choices[0].get("message", {}).get("content", "")
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"API [HTTP {e.code}] ({url}): {err_body}")
+    last_err = None
+    for attempt in range(2):
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                choices = data.get("choices", [])
+                if choices:
+                    return choices[0].get("message", {}).get("content", "")
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"API [HTTP {e.code}] ({url}): {err_body}")
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                continue
 
-    raise RuntimeError("Chat completion endpoint returned empty response.")
+    raise RuntimeError(f"Chat completion API error: {last_err}")
+
 
 
 def _call_anthropic(prompt: str, model: str, api_key: str) -> str:
