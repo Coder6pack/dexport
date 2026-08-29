@@ -24,7 +24,7 @@
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/your-username/dexport.git
+git clone https://github.com/Coder6pack/dexport.git
 cd dexport
 
 # 2. Tạo virtualenv và cài đặt package
