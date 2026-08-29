@@ -5,194 +5,173 @@
 [![Typer](https://img.shields.io/badge/CLI-Typer-green.svg)](https://typer.tiangolo.com/)
 [![Protocol](https://img.shields.io/badge/Protocol-Chrome_DevTools_Protocol-red.svg)](https://chromedevtools.github.io/devtools-protocol/)
 
-> **Điều khiển Discord Desktop từ Command Line & Telegram qua Chrome DevTools Protocol (CDP)** — Không cần Bot Token, không cần quyền Admin, không sửa đổi client. Tích hợp AI Summarizer, Telegram Remote Control & Auto-Chat Ghostwriter Persona.
+> **Control Discord Desktop from CLI & Telegram via Chrome DevTools Protocol (CDP)** — No Bot Token, no Admin rights, no client modifications required. Featuring Multi-Model AI Summarization, Interactive Telegram Remote Control & Autonomous Auto-Chat Ghostwriter Persona.
 
 ---
 
-## 🌟 Tính năng nổi bật
+## 🌟 Key Highlights
 
-1. **Token không lưu đĩa, mượn từ RAM**: Kết nối qua **Chrome DevTools Protocol (CDP)** (`--remote-debugging-port=41829`), mượn Authorization headers từ context Chromium của Discord Desktop.
-2. **Request từ Chromium thật**: Giữ trọn TLS fingerprint, User-Agent, cookies, headers — không lo bị Cloudflare/WAF chặn.
-3. **CLI-First, tên thay vì ID**: Hỗ trợ tìm kiếm Server và Channel bằng tên tiếng Việt (có dấu hoặc không dấu, fuzzy match) thay vì bắt buộc nhớ ID.
-4. **📊 AI Summarizer**: Tóm tắt & phân tích thảo luận theo ngày, người dùng, từ khóa bằng DeepSeek V4, Claude 3.7, GPT-4o, Gemini 2.5, Qwen, Kimi.
-5. **📱 Telegram Bot Remote Control**: Bàn phím nút bấm tương tác 1 chạm và ra lệnh bằng tiếng Việt tự nhiên ngay trên điện thoại.
-6. **🤖 AI Auto-Chat Persona**: Tự động trả lời tin nhắn trên Discord theo đúng phong cách & Persona của bạn, có mô phỏng "đang gõ phím..." chân thực.
+1. **Zero Disk Tokens (In-Memory Auth)**: Connects via **Chrome DevTools Protocol (CDP)** (`--remote-debugging-port=41829`), safely borrowing authorization tokens from RAM in the native Electron runtime. No tokens stored on disk.
+2. **Native Chromium TLS Fingerprint**: All API calls execute through `fetch()` inside the Discord desktop context, seamlessly bypassing Cloudflare/WAF bot protections.
+3. **Fuzzy Search (Names over IDs)**: Intelligently resolves Server and Channel names using fuzzy matching (accents, slugs, substrings) without memorizing snowflake IDs.
+4. **📊 Multi-LLM AI Summarizer**: Summarize and extract channel discussions by date (`--since today`, `3d`, `1w`), user, or keyword using DeepSeek V4, Claude 3.7, GPT-4o, Gemini 2.5, Qwen, or Kimi.
+5. **📱 Telegram Remote Control**: Full mobile control with interactive touch buttons and natural language conversational AI agent right inside Telegram.
+6. **🤖 Autonomous Auto-Chat Persona**: Automatically detects mentions/replies and generates persona-compliant responses with real typing indicators (`/typing`) and randomized delays.
 
 ---
 
-## 🚀 Cài đặt nhanh
+## 🚀 Quick Start
+
+### 1. Installation
 
 ```bash
-# 1. Clone repository
+# Clone the repository
 git clone https://github.com/Coder6pack/dexport.git
 cd dexport
 
-# 2. Tạo virtualenv và cài đặt package
+# Create virtual environment and install
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
-# 3. Tạo file cấu hình từ template
-cp .env.example .env
+# Copy environment template
+cp .env.example ~/.dexport.env
 ```
 
+### 2. Configure Environment (`~/.dexport.env`)
 
-### 2. Các lệnh thông dụng
+Add your API keys to `~/.dexport.env` once (automatically loaded by CLI):
 
-#### 🔹 Xem thông tin tài khoản hiện tại & trạng thái CDP
+```env
+# AI Provider (Choose one or more)
+OPENCODE_API_KEY="opencode-..."         # OpenCode Go (DeepSeek, Claude, Qwen, Kimi, GLM)
+OPENAI_API_KEY="sk-..."                 # OpenAI (GPT-4o, o3-mini)
+GEMINI_API_KEY="AIza..."                # Google Gemini (Gemini 2.5 Flash/Pro)
+ANTHROPIC_API_KEY="sk-ant-..."          # Anthropic (Claude 3.7 Sonnet)
+
+# Telegram Remote Control (Optional)
+TELEGRAM_BOT_TOKEN="123456789:ABC..."   # From @BotFather
+TELEGRAM_USER_ID="987654321"            # From @userinfobot (Locks permissions to you)
+```
+
+---
+
+## 💻 CLI Commands
+
+### 🔹 Account Profile & CDP Status
 ```bash
 dexport status
 ```
 
-#### 🔹 Liệt kê danh sách Server (Guilds)
+### 🔹 List Joined Servers (Guilds)
 ```bash
 dexport guilds
 ```
 
-#### 🔹 Liệt kê kênh trong Server
+### 🔹 List Channels in a Server
 ```bash
-dexport channels -g "cú đêm"
+dexport channels -g "My Server"
 ```
 
-#### 🔹 Đọc tin nhắn với bộ lọc nâng cao (Ngày, Người dùng, Từ khóa, File/Link)
+### 🔹 Read Messages with Advanced Filtering
 ```bash
-# Đọc tin nhắn hôm nay / 3 ngày gần đây
-dexport read -g "cú đêm" -c "lười-chat-tổng" --since today
-dexport read -g "cú đêm" -c "lười-chat-tổng" --since 3d
+# Read today's or past 3 days' messages
+dexport read -g "General" -c "chat" --since today
+dexport read -g "General" -c "chat" --since 3d
 
-# Lọc tin nhắn của 1 người trong 24 giờ qua
-dexport read -g "cú đêm" -c "lười-chat-tổng" -u "nguyen" --since 24h
+# Filter messages from a specific user in the last 24h
+dexport read -g "General" -c "chat" -u "john" --since 24h
 
-# Tìm kiếm tin nhắn chứa từ khóa "release" hoặc "lỗi"
-dexport read -g "cú đêm" -c "lười-chat-tổng" -q "release"
+# Search for keywords
+dexport read -g "General" -c "chat" -q "release"
 
-# Chỉ lấy tin nhắn có file đính kèm hoặc có link website
-dexport read -g "cú đêm" -c "lười-chat-tổng" --has-file
-dexport read -g "cú đêm" -c "lười-chat-tổng" --has-link --human-only
+# Filter messages containing attachments or links
+dexport read -g "General" -c "chat" --has-file
+dexport read -g "General" -c "chat" --has-link --human-only
 ```
 
-#### 🔹 Tổng hợp & Tóm tắt với nhiều Model AI (OpenCode Go, Gemini, OpenAI, Claude, DeepSeek, Ollama)
+### 🔹 AI Discussion Summarization
+Generates comprehensive summaries and automatically exports reports to `~/Documents/report/report-DD-MM-YYYY.md`.
+
 ```bash
-# Xem danh sách các model và nhà cung cấp hỗ trợ
+# View all supported AI models
 dexport models
 
-# 1. Tóm tắt bằng OpenCode Go API (Gói $10/tháng xài DeepSeek-R1, Claude 3.7, Kimi, Qwen...) ⭐
-export OPENCODE_API_KEY="opencode-..."
+# Summarize today's discussion using DeepSeek V4 Flash (OpenCode Go)
+dexport summarize -g "Work" -c "dev-general" -m deepseek-v4-flash --since today
 
-# Dùng DeepSeek-R1 qua OpenCode Go
-dexport summarize -g "cú đêm" -c "lười-chat-tổng" -u "nguyen" -m deepseek-r1 --since 3d -o bao_cao.md
+# Summarize past 3 days using Claude 3.7 Sonnet
+dexport summarize -g "Work" -c "dev-general" -m claude-3-7-sonnet --since 3d
 
-# Dùng Claude 3.7 Sonnet qua OpenCode Go
-dexport summarize -g "cú đêm" -c "lười-chat-tổng" -m claude-3-7-sonnet --since today -o bao_cao.md
+# Summarize discussion filtered by user
+dexport summarize -g "Work" -c "dev-general" -u "alex" --since 1w
 
-# Dùng Kimi K1.5 / Qwen 2.5 Coder
-dexport summarize -g "cú đêm" -c "lười-chat-tổng" -m kimi-k1.5 --since 1w -o bao_cao.md
-
-# 2. Tóm tắt bằng Google Gemini (mặc định)
-export GEMINI_API_KEY="AIzaSy..."
-dexport summarize -g "cú đêm" -c "lười-chat-tổng" -u "nguyen" --since 3d -o bao_cao.md
-
-# 3. Tóm tắt bằng OpenAI GPT-4o / GPT-4o-mini
-export OPENAI_API_KEY="sk-..."
-dexport summarize -g "cú đêm" -c "lười-chat-tổng" -m gpt-4o --since today -o bao_cao_today.md
-
-# 4. Tóm tắt bằng Anthropic Claude trực tiếp
-export ANTHROPIC_API_KEY="sk-ant-..."
-dexport summarize -g "cú đêm" -c "lười-chat-tổng" -m claude-3-7-sonnet-latest -o bao_cao.md
-
-# 5. Tóm tắt OFFLINE bằng Ollama / Local LLM (Llama 3, Qwen 2.5, Mistral...)
-dexport summarize -g "cú đêm" -c "lười-chat-tổng" -m llama3.2 --base-url http://localhost:11434/v1 -o bao_cao.md
+# Summarize OFFLINE using Local LLM (Ollama)
+dexport summarize -g "Work" -c "dev-general" -m llama3.2 --base-url http://localhost:11434/v1
 ```
 
-
-
-#### 🔹 Xuất tin nhắn ra file Markdown hoặc JSON
-Tất cả file báo cáo và xuất dữ liệu mặc định sẽ được lưu tại **`/Users/mac/Documents/report`** với tên định dạng **`report-DD-MM-YYYY.md`** (ví dụ: `report-28-08-2026.md`).
-
+### 🔹 Send, Reply & React
 ```bash
-# 1. Tự động lưu tóm tắt vào /Users/mac/Documents/report/report-DD-MM-YYYY.md
-dexport summarize -g "cú đêm" -c "lười-chat-tổng" -m deepseek-v4-flash --since today
+# Send message
+dexport send -g "Work" -c "general" -m "Hello team from CLI!"
 
-# 2. Xuất tin nhắn kênh ra Markdown tại /Users/mac/Documents/report/
-dexport read -g "cú đêm" -c "lười-chat-tổng" --limit 100 --export md
+# Reply to a message ID
+dexport reply -g "Work" -c "general" --msg-id 123456789012345678 -m "Got it, thanks!"
 
-# 3. Hoặc chỉ định tên file / đường dẫn tùy ý:
-dexport summarize -g "cú đêm" -c "lười-chat-tổng" -o custom_report.md
-```
+# Add reaction
+dexport react -g "Work" -c "general" --msg-id 123456789012345678 -e "🔥"
 
-
-#### 🔹 Gửi tin nhắn
-```bash
-dexport send -g "cú đêm" -c "lười-chat-tổng" -m "Xin chào anh em từ CLI!"
-```
-
-#### 🔹 Trả lời (Reply) tin nhắn
-```bash
-dexport reply -g "cú đêm" -c "lười-chat-tổng" --msg-id 123456789012345678 -m "Đã nhận thông tin nhé"
-```
-
-#### 🔹 Thả reaction cảm xúc
-```bash
-dexport react -g "cú đêm" -c "lười-chat-tổng" --msg-id 123456789012345678 -e "🔥"
-```
-
-#### 🔹 Theo dõi tin nhắn trực tiếp theo thời gian thực (Live Watch)
-```bash
-dexport watch -g "cú đêm" -c "lười-chat-tổng"
+# Real-time live message watch
+dexport watch -g "Work" -c "general"
 ```
 
 ---
 
-### 📱 5. Điều khiển từ xa bằng Telegram Bot (Remote Control)
+## 📱 Telegram Remote Control (`dexport bot`)
 
-Bạn có thể điều khiển `dexport` đọc, gửi và tóm tắt Discord ngay trên điện thoại thông qua Telegram:
+Control Discord directly from your phone through Telegram with interactive buttons and natural conversational AI:
 
-#### 1. Tạo Bot Telegram (30 giây):
-1. Mở Telegram, chat với **`@BotFather`**, gõ `/newbot` và làm theo hướng dẫn để lấy `TELEGRAM_BOT_TOKEN`.
-2. Lấy User ID của bạn qua bot **`@userinfobot`** để khóa bảo mật (chỉ bạn mới được điều khiển).
-
-#### 2. Khởi chạy Bot:
 ```bash
-export OPENCODE_API_KEY="opencode-..."
-export TELEGRAM_BOT_TOKEN="123456789:ABCdef..."
-export TELEGRAM_USER_ID="987654321"
-
-# Bật bot lắng nghe
+# Start Telegram daemon
 dexport bot
 ```
 
-#### 3. Nhắn tin tự nhiên cho Bot trên điện thoại:
-- *"Tóm tắt kênh ai-lười-chat-tổng bên server Cú Đêm hôm nay bằng deepseek"* ➔ Bot cào chat, tóm tắt và gửi trả lại text + file `.md` về điện thoại!
-- *"Đọc 10 tin nhắn mới nhất kênh thông-báo"*
-- *"Gửi 'Hello anh em' vào kênh nội-quy"*
-- *"Bật autochat kênh lười-chat, trả lời vui vẻ ngắn gọn"*
+### Features:
+- **Interactive Touch Keyboards**: 1-tap buttons for `[ 📊 Summarize Today ]`, `[ 💬 Read Recent ]`, `[ 🤖 Enable Auto-Chat ]`, `[ ⚙️ Settings & Models ]`, `[ 🏰 Servers List ]`.
+- **In-App Model Switching**: Switch between DeepSeek V4, Claude 3.7, GPT-4o, Gemini, Qwen, Kimi on the fly via Telegram inline buttons.
+- **Full Conversational AI Agent**: Chat naturally, ask questions, explain code, or issue Discord commands in plain English.
+- **Standby Mode**: Tap `[ ⏸️ Pause Bot ]` when not in use.
 
 ---
 
-### 🤖 6. AI Auto-Chat Persona (Tự động nhắn tin theo phong cách & Prompt)
+## 🤖 AI Auto-Chat Ghostwriter Persona (`dexport autochat`)
 
+Automatically replies to mentions, replies, or general channel discussions mimicking your personal writing style:
 
-Tool có thể tự động trả lời người khác trên Discord như bạn đang online thật:
-
-#### Tính năng:
-- **Tuân thủ Prompt 100%**: Bạn chỉ đạo phong cách, xưng hô, tính cách gì (ngắn gọn, hài hước, trả lời code, xưng bro/ae, v.v.), AI sẽ tuân thủ tuyệt đối.
-- **Mô phỏng người thật**: Bật trạng thái *"Philip đang soạn tin nhắn..."* trong 2–5 giây và có độ trễ ngẫu nhiên trước khi gửi.
-- **Anti-Loop an toàn**: Không bao giờ rep bot khác, có cooldown chống spam.
-- **Bật / Tắt linh hoạt**: Qua CLI hoặc trực tiếp trên Telegram.
-
-#### 1. Chạy trên Terminal:
 ```bash
-# Chỉ trả lời khi được tag tên hoặc rep tin nhắn
-dexport autochat -g "Cú Đêm AI" -c "ai-lười-chat-tổng" -P "Nói chuyện vui vẻ, ngắn gọn, xưng anh em, hỗ trợ nhiệt tình về code"
+# Reply only when tagged or replied to
+dexport autochat -g "Work" -c "chat" -P "Friendly, concise (1-2 sentences), helpful with coding questions"
 
-# Tự động tham gia trò chuyện cả kênh
-dexport autochat -g "Cú Đêm AI" -c "ai-lười-chat-tổng" --all-chat --cooldown 30 -P "Thỉnh thoảng góp vui 1 câu tự nhiên"
+# Participate in general channel conversation with cooldown
+dexport autochat -g "Work" -c "chat" --all-chat --cooldown 30 -P "Occasional friendly banter"
 ```
 
-#### 2. Bật / Tắt qua Telegram từ điện thoại:
-- `/autochat on ai-lười-chat-tổng Hãy trả lời ngắn gọn, thân thiện` (Bật)
-- `/autochat off` (Tắt)
-- `/autochat status` (Xem trạng thái & số tin đã gửi)
-- *Hoặc nhắn tự nhiên:* *"Bật autochat kênh lười-chat, giả làm chuyên gia thân thiện"*
+### Key Capabilities:
+- **100% Prompt Compliant**: Strictly adheres to your custom persona instructions, tone, and knowledge.
+- **Human Typing Simulation**: Displays *"typing..."* indicator for 2–5 seconds with dynamic delay before sending.
+- **Anti-Loop Safety**: Never replies to bots or own messages, equipped with cooldown timers.
+- **Telegram Live Alerts**: Sends push notifications to your phone whenever AutoChat replies on Discord.
 
+---
 
+## 🔒 Security & Privacy
+
+- **No Token Storage**: Discord tokens are decrypted in RAM at runtime and never persisted to disk.
+- **No Third-Party Telemetry**: Direct connection between your local Discord client, your AI provider, and your Telegram bot.
+- **Permissions Locked**: Telegram bot strictly enforces `TELEGRAM_USER_ID` authentication.
+
+---
+
+## 📄 License
+
+Distributed under the **MIT License**. See [LICENSE](LICENSE) for more information.

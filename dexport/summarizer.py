@@ -23,12 +23,11 @@ from .exporter import parse_timestamp
 def extract_keywords(texts: List[str], top_n: int = 10) -> List[Tuple[str, int]]:
     """Extract most frequent significant words from user messages."""
     stop_words = {
-        "và", "là", "của", "cho", "có", "được", "với", "trong", "để", "thì",
-        "này", "đó", "không", "một", "các", "những", "người", "khi", "tại",
-        "đã", "sẽ", "đang", "như", "nhưng", "hoặc", "nếu", "mà", "lại", "ra",
-        "vào", "lên", "xuống", "đi", "đến", "qua", "làm", "gì", "sao", "ai",
         "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-        "of", "with", "is", "are", "was", "were", "it", "this", "that", "i", "you", "he", "she", "we", "they"
+        "of", "with", "is", "are", "was", "were", "it", "this", "that", "i",
+        "you", "he", "she", "we", "they", "have", "has", "had", "do", "does",
+        "did", "be", "been", "being", "from", "by", "as", "about", "can", "will",
+        "just", "like", "so", "what", "there", "all", "if", "would", "my", "your"
     }
     words = []
     for text in texts:
@@ -86,7 +85,7 @@ def generate_local_summary(
     top_keywords = extract_keywords(texts, top_n=8)
 
     return {
-        "user_name": target_user_name or "Tất cả mọi người",
+        "user_name": target_user_name or "Everyone",
         "guild_name": guild_name,
         "channel_name": channel_name,
         "total_messages": total,
@@ -118,24 +117,24 @@ def build_summary_prompt(
         content = msg.get("content", "")
         ref = ""
         if msg.get("referenced_message"):
-            ref_author = msg["referenced_message"].get("author", {}).get("username", "ai đó")
+            ref_author = msg["referenced_message"].get("author", {}).get("username", "someone")
             ref_snippet = (msg["referenced_message"].get("content") or "")[:40]
-            ref = f" [Trả lời {ref_author}: '{ref_snippet}']"
+            ref = f" [Replying to {ref_author}: '{ref_snippet}']"
         lines.append(f"[{ts}] {author}: {content}{ref}")
 
     chat_transcript = "\n".join(lines)
-    target_desc = f"của '{target_user_name}'" if target_user_name else "trong cuộc thảo luận"
+    target_desc = f"from '{target_user_name}'" if target_user_name else "in the discussion"
 
     return f"""
-Bạn là một chuyên gia tóm tắt và phân tích dữ liệu chat. Hãy đọc toàn bộ nội dung chat {target_desc} tại kênh #{channel_name} (Server: {guild_name}) dưới đây và viết một bản BÁO CÁO TỔNG HỢP chi tiết, súc tích bằng tiếng Việt.
+You are an expert conversation analyst. Review the chat transcript {target_desc} in channel #{channel_name} (Server: {guild_name}) below and write a comprehensive, well-structured SUMMARY REPORT in English.
 
-Cấu trúc báo cáo yêu cầu:
-1. 📌 **Executive Summary (Tổng quan ngắn gọn 1-2 câu)**: Nội dung và mục đích chính của các cuộc trao đổi.
-2. 📋 **Các công việc, báo cáo hoặc thông tin chính** được chia sẻ/thực hiện.
-3. ❓ **Các câu hỏi, yêu cầu, thắc mắc hoặc khó khăn** được đưa ra.
-4. 🎯 **Các kết luận, thống nhất, hạn chót (deadlines) hoặc hành động tiếp theo (Action Items)**.
+Required Structure:
+1. 📌 **Executive Summary**: Brief 1-2 sentence overview of main topics and objectives.
+2. 📋 **Key Discussions & Updates**: Essential points, status reports, or information shared.
+3. ❓ **Questions, Issues & Challenges**: Obstacles, questions raised, or blockers encountered.
+4. 🎯 **Decisions, Next Steps & Action Items**: Key conclusions, agreed solutions, deadlines, and deliverables.
 
-Nội dung chat transcript:
+Chat Transcript:
 \"\"\"
 {chat_transcript}
 \"\"\"
@@ -172,7 +171,7 @@ def _call_gemini(prompt: str, model: str, api_key: str) -> str:
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="ignore")
         raise RuntimeError(f"Gemini API [HTTP {e.code}]: {err_body}")
-    raise RuntimeError("Gemini không trả về kết quả.")
+    raise RuntimeError("Gemini returned empty response.")
 
 
 def _call_openai_compatible(
@@ -194,7 +193,7 @@ def _call_openai_compatible(
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "Bạn là trợ lý AI chuyên tóm tắt và phân tích nội dung chat chuyên nghiệp, mạch lạc."},
+            {"role": "system", "content": "You are a professional AI assistant specializing in coherent, insightful chat summaries."},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.3,
@@ -216,7 +215,7 @@ def _call_openai_compatible(
         err_body = e.read().decode("utf-8", errors="ignore")
         raise RuntimeError(f"API [HTTP {e.code}] ({url}): {err_body}")
 
-    raise RuntimeError("API chat completion không trả về kết quả.")
+    raise RuntimeError("Chat completion endpoint returned empty response.")
 
 
 def _call_anthropic(prompt: str, model: str, api_key: str) -> str:
@@ -252,7 +251,7 @@ def _call_anthropic(prompt: str, model: str, api_key: str) -> str:
         err_body = e.read().decode("utf-8", errors="ignore")
         raise RuntimeError(f"Claude API [HTTP {e.code}]: {err_body}")
 
-    raise RuntimeError("Anthropic Claude API không trả về kết quả.")
+    raise RuntimeError("Anthropic Claude API returned empty response.")
 
 
 def call_ai_summary(
@@ -282,7 +281,6 @@ def call_ai_summary(
     m_lower = model.lower()
     prov_lower = (provider or "").lower()
 
-    # OpenCode Go specific models
     opencode_models = (
         "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4",
         "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5",
@@ -294,7 +292,6 @@ def call_ai_summary(
     )
 
     try:
-        # Check if user wants OpenCode Go or provided OpenCode Go model
         is_opencode = (
             prov_lower in ("opencode", "opencode-go", "opencode_go")
             or m_lower.startswith("opencode/")
@@ -305,61 +302,54 @@ def call_ai_summary(
         if is_opencode and not base_url:
             key = api_key or os.environ.get("OPENCODE_API_KEY") or os.environ.get("OPENCODE_GO_API_KEY") or os.environ.get("OPENCODE_TOKEN")
             if not key:
-                return "⚠️ Cần OPENCODE_API_KEY hoặc cờ --api-key để sử dụng OpenCode Go API."
+                return "⚠️ Missing OPENCODE_API_KEY or --api-key flag to use OpenCode Go API."
             actual_model = model.replace("opencode/", "")
             return _call_openai_compatible(prompt, actual_model, key, base_url="https://opencode.ai/zen/go/v1")
 
-        # 2. Google Gemini
         if "gemini" in m_lower and prov_lower != "opencode":
             key = api_key or os.environ.get("GEMINI_API_KEY")
             if not key:
                 opencode_key = os.environ.get("OPENCODE_API_KEY") or os.environ.get("OPENCODE_GO_API_KEY")
                 if opencode_key:
                     return _call_openai_compatible(prompt, model, opencode_key, base_url="https://opencode.ai/zen/go/v1")
-                return "⚠️ Cần GEMINI_API_KEY hoặc cờ --api-key để sử dụng Gemini."
+                return "⚠️ Missing GEMINI_API_KEY or --api-key flag to use Gemini."
             return _call_gemini(prompt, model, key)
 
-        # 3. Anthropic Claude (direct)
         elif "claude" in m_lower and not base_url and prov_lower != "opencode":
             key = api_key or os.environ.get("ANTHROPIC_API_KEY")
             if not key:
                 opencode_key = os.environ.get("OPENCODE_API_KEY") or os.environ.get("OPENCODE_GO_API_KEY")
                 if opencode_key:
                     return _call_openai_compatible(prompt, model, opencode_key, base_url="https://opencode.ai/zen/go/v1")
-                return "⚠️ Cần ANTHROPIC_API_KEY hoặc cờ --api-key để sử dụng Claude (hoặc dùng qua OpenCode Go)."
+                return "⚠️ Missing ANTHROPIC_API_KEY or --api-key flag to use Claude directly."
             return _call_anthropic(prompt, model, key)
 
-        # 4. DeepSeek (direct)
         elif "deepseek" in m_lower and not base_url and prov_lower != "opencode":
             key = api_key or os.environ.get("DEEPSEEK_API_KEY")
             if not key:
                 opencode_key = os.environ.get("OPENCODE_API_KEY") or os.environ.get("OPENCODE_GO_API_KEY")
                 if opencode_key:
                     return _call_openai_compatible(prompt, model, opencode_key, base_url="https://opencode.ai/zen/go/v1")
-                return "⚠️ Cần DEEPSEEK_API_KEY hoặc cờ --api-key để sử dụng DeepSeek."
+                return "⚠️ Missing DEEPSEEK_API_KEY or --api-key flag to use DeepSeek."
             return _call_openai_compatible(prompt, model, key, base_url="https://api.deepseek.com/v1")
 
-        # 5. Ollama / Local LLM
         elif base_url or m_lower.startswith("ollama/") or m_lower in ("llama3", "llama3.2", "qwen2.5", "mistral", "gemma2"):
             endpoint = base_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
             actual_model = model.replace("ollama/", "")
             return _call_openai_compatible(prompt, actual_model, api_key=api_key or "ollama", base_url=endpoint)
 
-        # 6. Default / OpenAI compatible
         else:
             key = api_key or os.environ.get("OPENAI_API_KEY")
             if not key:
                 opencode_key = os.environ.get("OPENCODE_API_KEY") or os.environ.get("OPENCODE_GO_API_KEY")
                 if opencode_key:
                     return _call_openai_compatible(prompt, model, opencode_key, base_url="https://opencode.ai/zen/go/v1")
-                return f"⚠️ Cần OPENAI_API_KEY (hoặc OPENCODE_API_KEY) để sử dụng model '{model}'."
+                return f"⚠️ Missing OPENAI_API_KEY (or OPENCODE_API_KEY) to use model '{model}'."
             endpoint = base_url or "https://api.openai.com/v1"
             return _call_openai_compatible(prompt, model, key, base_url=endpoint)
 
     except Exception as e:
-        return f"❌ Lỗi khi gọi AI ({model}): {e}"
-
-
+        return f"❌ AI Error ({model}): {e}"
 
 
 def render_summary_report(
@@ -369,7 +359,7 @@ def render_summary_report(
     model_name: Optional[str] = None,
 ) -> None:
     """Render summary report on terminal."""
-    user_name = summary_data.get("user_name", "Tất cả mọi người")
+    user_name = summary_data.get("user_name", "Everyone")
     guild_name = summary_data.get("guild_name", "")
     channel_name = summary_data.get("channel_name", "")
     total = summary_data.get("total_messages", 0)
@@ -377,58 +367,55 @@ def render_summary_report(
     console.print()
     console.print(
         Panel(
-            f"[bold cyan]Đối tượng:[/bold cyan] [bold yellow]{user_name}[/bold yellow]  |  "
-            f"[bold cyan]Kênh:[/bold cyan] [green]#{channel_name}[/green] ({guild_name})  |  "
-            f"[bold cyan]Số tin nhắn:[/bold cyan] [yellow]{total}[/yellow]",
-            title="📊 [bold magenta]BÁO CÁO TỔNG HỢP TIN NHẮN[/bold magenta]",
+            f"[bold cyan]Target:[/bold cyan] [bold yellow]{user_name}[/bold yellow]  |  "
+            f"[bold cyan]Channel:[/bold cyan] [green]#{channel_name}[/green] ({guild_name})  |  "
+            f"[bold cyan]Total Messages:[/bold cyan] [yellow]{total}[/yellow]",
+            title="📊 [bold magenta]DISCUSSION SUMMARY REPORT[/bold magenta]",
             border_style="magenta",
         )
     )
 
     if total == 0:
-        console.print(f"[yellow]Không tìm thấy tin nhắn nào trong phạm vi bộ lọc.[/yellow]\n")
+        console.print(f"[yellow]No messages found matching filtering criteria.[/yellow]\n")
         return
 
-    # Info grid
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="bold cyan", justify="right")
     grid.add_column(style="white")
 
-    grid.add_row("Khung thời gian:", f"{summary_data.get('first_seen')} ➔ {summary_data.get('last_seen')}")
-    grid.add_row("Tổng số link gửi:", f"[green]{len(summary_data.get('links', []))}[/green] links")
-    grid.add_row("Số file đính kèm:", f"[green]{len(summary_data.get('attachments', []))}[/green] files")
+    grid.add_row("Time Range:", f"{summary_data.get('first_seen')} ➔ {summary_data.get('last_seen')}")
+    grid.add_row("Shared Links:", f"[green]{len(summary_data.get('links', []))}[/green] links")
+    grid.add_row("Attachments:", f"[green]{len(summary_data.get('attachments', []))}[/green] files")
 
     keywords = summary_data.get("top_keywords", [])
     if keywords:
         kw_str = ", ".join([f"[yellow]{w}[/yellow] ({c})" for w, c in keywords])
-        grid.add_row("Từ khóa nổi bật:", kw_str)
+        grid.add_row("Top Keywords:", kw_str)
 
-    console.print(Panel(grid, title="📈 [bold cyan]Thống kê hoạt động[/bold cyan]", border_style="cyan"))
+    console.print(Panel(grid, title="📈 [bold cyan]Activity Statistics[/bold cyan]", border_style="cyan"))
 
-    # AI Summary
     if ai_summary_text:
         console.print()
         console.print(
             Panel(
                 Markdown(ai_summary_text),
-                title=f"🤖 [bold green]AI Tóm Tắt ({model_name or 'AI'})[/bold green]",
+                title=f"🤖 [bold green]AI Summary ({model_name or 'AI'})[/bold green]",
                 border_style="green",
             )
         )
     else:
         console.print(
-            "\n[dim italic]💡 Mẹo: Set GEMINI_API_KEY / OPENAI_API_KEY hoặc truyền --model và --api-key để kích hoạt AI tóm tắt.[/dim italic]"
+            "\n[dim italic]💡 Tip: Set GEMINI_API_KEY / OPENCODE_API_KEY or pass --model and --api-key to activate AI summarization.[/dim italic]"
         )
 
-    # Show links if any
     links = summary_data.get("links", [])
     if links:
         console.print()
-        console.print("[bold cyan]🔗 Các liên kết đã chia sẻ:[/bold cyan]")
+        console.print("[bold cyan]🔗 Shared Links:[/bold cyan]")
         for url in links[:10]:
             console.print(f"  • [blue underline]{url}[/blue underline]")
         if len(links) > 10:
-            console.print(f"  [dim]...và {len(links) - 10} liên kết khác.[/dim]")
+            console.print(f"  [dim]...and {len(links) - 10} more links.[/dim]")
 
     console.print()
 
@@ -440,46 +427,43 @@ def export_summary_markdown(
     model_name: Optional[str] = None,
 ) -> None:
     """Save full summary report + chat history to a Markdown file."""
-    user_name = summary_data.get("user_name", "Tất cả mọi người")
+    user_name = summary_data.get("user_name", "Everyone")
     guild_name = summary_data.get("guild_name", "")
     channel_name = summary_data.get("channel_name", "")
     total = summary_data.get("total_messages", 0)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     lines = [
-        f"# Báo cáo tổng hợp tin nhắn: {user_name}\n\n",
-        f"- **Đối tượng:** {user_name}\n",
+        f"# Discussion Summary Report: {user_name}\n\n",
+        f"- **Target:** {user_name}\n",
         f"- **Server:** {guild_name}\n",
-        f"- **Kênh:** #{channel_name}\n",
-        f"- **Thời gian xuất:** {now_str}\n",
-        f"- **Tổng số tin nhắn:** {total}\n",
-        f"- **Khung giờ hoạt động:** {summary_data.get('first_seen')} ➔ {summary_data.get('last_seen')}\n\n",
+        f"- **Channel:** #{channel_name}\n",
+        f"- **Exported At:** {now_str}\n",
+        f"- **Total Messages:** {total}\n",
+        f"- **Active Timeline:** {summary_data.get('first_seen')} ➔ {summary_data.get('last_seen')}\n\n",
         "---\n\n",
     ]
 
     if ai_summary_text:
-        lines.append(f"## 🤖 Tóm tắt thông minh bởi AI ({model_name or 'AI'})\n\n")
+        lines.append(f"## 🤖 AI Summary ({model_name or 'AI'})\n\n")
         lines.append(f"{ai_summary_text}\n\n")
         lines.append("---\n\n")
 
-    # Links
     links = summary_data.get("links", [])
     if links:
-        lines.append("## 🔗 Danh sách liên kết đã chia sẻ\n\n")
+        lines.append("## 🔗 Shared Links\n\n")
         for link in links:
             lines.append(f"- {link}\n")
         lines.append("\n---\n\n")
 
-    # Attachments
     attachments = summary_data.get("attachments", [])
     if attachments:
-        lines.append("## 📎 File & Ảnh đính kèm\n\n")
+        lines.append("## 📎 Attachments & Media\n\n")
         for att in attachments:
             lines.append(f"- [{att['filename']}]({att['url']}) ({att['size_kb']:.1f} KB)\n")
         lines.append("\n---\n\n")
 
-    # Detailed Messages
-    lines.append("## 💬 Chi tiết toàn bộ tin nhắn theo trình tự thời gian\n\n")
+    lines.append("## 💬 Complete Chronological Message History\n\n")
     for msg in summary_data.get("messages", []):
         author = msg.get("author", {}).get("global_name") or msg.get("author", {}).get("username", "Unknown")
         ts = parse_timestamp(msg.get("timestamp"))
@@ -488,9 +472,9 @@ def export_summary_markdown(
 
         lines.append(f"**[{ts}] {author}** `[ID: {msg_id}]`  \n")
         if msg.get("referenced_message"):
-            ref_author = msg["referenced_message"].get("author", {}).get("username", "ai đó")
+            ref_author = msg["referenced_message"].get("author", {}).get("username", "someone")
             ref_content = msg["referenced_message"].get("content", "")
-            lines.append(f"> **Trả lời {ref_author}:** {ref_content}\n")
+            lines.append(f"> **Replying to {ref_author}:** {ref_content}\n")
         if content:
             lines.append(f"{content}\n")
         lines.append("\n")

@@ -20,9 +20,9 @@ logger = logging.getLogger("dexport.autochat")
 
 
 DEFAULT_PERSONA_PROMPT = (
-    "Hãy đóng vai một thành viên thân thiện, vui vẻ và nhiệt tình trong nhóm. "
-    "Nói chuyện tự nhiên, ngắn gọn (1-2 câu), xưng hô anh/em/ae/bro, "
-    "trả lời đúng trọng tâm câu hỏi nếu có ai hỏi, dùng từ ngữ đời thường của cộng đồng công nghệ/chat Discord."
+    "Act as a friendly, helpful, and natural community member. "
+    "Keep replies concise (1-2 sentences), directly answer questions when asked, "
+    "and use casual modern Discord conversational tone."
 )
 
 
@@ -45,26 +45,23 @@ async def generate_persona_reply(
     my_username = current_user.get("username", "")
     my_global_name = current_user.get("global_name") or my_username
 
-    # Format recent conversation context
     context_lines = []
     for m in messages[-12:]:
         author = m.get("author", {})
         author_name = author.get("global_name") or author.get("username", "Unknown")
         author_id = str(author.get("id", ""))
         is_me = (author_id == my_id)
-        tag = " (BẠN)" if is_me else ""
+        tag = " (YOU)" if is_me else ""
         content = m.get("content", "").strip()
 
-        # Check attachments
         if m.get("attachments"):
-            content += f" [File/Ảnh: {len(m['attachments'])}]"
+            content += f" [Attachment/Image: {len(m['attachments'])}]"
 
-        # Check reply
         ref = m.get("referenced_message")
         ref_text = ""
         if ref:
-            ref_author = ref.get("author", {}).get("global_name") or ref.get("author", {}).get("username", "Ai đó")
-            ref_text = f" (Trả lời {ref_author}: '{ref.get('content', '')[:30]}...')"
+            ref_author = ref.get("author", {}).get("global_name") or ref.get("author", {}).get("username", "Someone")
+            ref_text = f" (Replying to {ref_author}: '{ref.get('content', '')[:30]}...')"
 
         if content:
             context_lines.append(f"{author_name}{tag}{ref_text}: {content}")
@@ -72,21 +69,21 @@ async def generate_persona_reply(
     conversation_text = "\n".join(context_lines)
 
     system_instruction = f"""
-Bạn đang đóng vai tài khoản '{my_global_name}' (@{my_username}) trên Discord trong server '{guild_name}', kênh '#{channel_name}'.
-Nhiệm vụ của bạn là tiếp tục cuộc trò chuyện và viết 1 câu trả lời tự nhiên theo đúng chỉ đạo dưới đây.
+You are roleplaying as the Discord user '{my_global_name}' (@{my_username}) in server '{guild_name}', channel '#{channel_name}'.
+Your task is to continue the conversation naturally according to the persona instructions below.
 
-🎯 CHỈ ĐẠO & PHONG CÁCH CỦA BẠN:
+🎯 YOUR PERSONA & STYLE INSTRUCTIONS:
 {custom_prompt}
 
-📜 CÁC NGUYÊN TẮC BẮT BUỘC:
-1. Viết tự nhiên bằng tiếng Việt, ngắn gọn (chỉ 1 đến 2 câu), giống người dùng Discord thật đang chat.
-2. TUYỆT ĐỐI KHÔNG xưng là AI, trợ lý ảo hay dùng giọng văn robot sách vở/khách sáo.
-3. Không lặp lại y nguyên câu nói của người khác.
-4. Nếu thấy đoạn hội thoại không cần thiết phải nói gì hoặc không liên quan, hãy trả về đúng từ: [PASS]
-5. Chỉ trả về duy nhất nội dung câu chat cần gửi, không thêm dấu ngoặc kép hay lời dẫn.
+📜 STRICT RULES:
+1. Write naturally and concisely (1 to 2 sentences max), just like a real Discord user chatting.
+2. NEVER identify as an AI, assistant, or bot. Do not use robotic or overly formal language.
+3. Do not echo or repeat the other user's message word-for-word.
+4. If there is no need to reply or the message is irrelevant, output exactly: [PASS]
+5. Output ONLY the raw chat message content, without quotes or conversational preambles.
 """
 
-    prompt = f"Ngữ cảnh các tin nhắn gần nhất:\n{conversation_text}\n\nCâu trả lời của bạn ({my_global_name}):"
+    prompt = f"Recent conversation context:\n{conversation_text}\n\nYour reply ({my_global_name}):"
 
     try:
         m_lower = model.lower()
@@ -106,7 +103,7 @@ Nhiệm vụ của bạn là tiếp tục cuộc trò chuyện và viết 1 câu
 
         return reply
     except Exception as e:
-        logger.error(f"Lỗi tạo câu trả lời AutoChat: {e}")
+        logger.error(f"AutoChat generation error: {e}")
         return None
 
 
@@ -153,27 +150,23 @@ class AutoChatSession:
             c_info = await client.resolve_channel(g_info["id"], self.channel_name)
             channel_id = c_info["id"]
 
-            # Fetch initial latest message
             initial_msgs = await client.get_messages(channel_id, limit=3)
             if initial_msgs:
                 self.last_seen_msg_id = initial_msgs[0]["id"]
 
-            logger.info(f"AutoChat bắt đầu chạy trong #{c_info['name']} ({g_info['name']})...")
+            logger.info(f"AutoChat active in #{c_info['name']} ({g_info['name']})...")
 
             while self.is_running:
                 try:
                     await asyncio.sleep(3.0)
 
-                    # Poll for new messages
                     new_msgs = await client.get_messages(channel_id, limit=10, after=self.last_seen_msg_id)
                     if not new_msgs:
                         continue
 
-                    # Sort oldest to newest
                     sorted_new = sorted(new_msgs, key=lambda m: int(m.get("id", "0")))
                     self.last_seen_msg_id = sorted_new[-1]["id"]
 
-                    # Filter out messages from myself and bots
                     candidate_msgs = []
                     for m in sorted_new:
                         author = m.get("author", {})
@@ -186,12 +179,10 @@ class AutoChatSession:
                     if not candidate_msgs:
                         continue
 
-                    # Check trigger condition
                     latest_msg = candidate_msgs[-1]
                     trigger_reply_to_id = None
                     should_respond = False
 
-                    # Check if mentioned or replied to me
                     content_lower = latest_msg.get("content", "").lower()
                     ref = latest_msg.get("referenced_message")
                     is_reply_to_me = bool(ref and str(ref.get("author", {}).get("id")) == my_id)
@@ -205,7 +196,6 @@ class AutoChatSession:
                         should_respond = True
                         trigger_reply_to_id = latest_msg["id"]
                     elif not self.mentions_only:
-                        # General chat engagement: check cooldown
                         now = asyncio.get_event_loop().time()
                         if now - self.last_sent_time >= self.cooldown:
                             should_respond = True
@@ -213,16 +203,13 @@ class AutoChatSession:
                     if not should_respond:
                         continue
 
-                    # Check cooldown
                     now = asyncio.get_event_loop().time()
                     if now - self.last_sent_time < self.cooldown:
                         continue
 
-                    # Get recent context
                     all_recent = await client.get_messages(channel_id, limit=15)
                     all_recent_sorted = sorted(all_recent, key=lambda m: int(m.get("id", "0")))
 
-                    # Generate AI Persona Response
                     response_text = await generate_persona_reply(
                         messages=all_recent_sorted,
                         current_user=user,
@@ -235,12 +222,11 @@ class AutoChatSession:
                     if not response_text:
                         continue
 
-                    # Simulate realistic human typing
+                    # Simulate realistic human typing delay
                     await client.send_typing(channel_id)
                     typing_duration = min(max(len(response_text) * 0.04 + random.uniform(1.5, 3.0), 2.0), 6.0)
                     await asyncio.sleep(typing_duration)
 
-                    # Send message
                     res = await client.send_message(
                         channel_id=channel_id,
                         content=response_text,
@@ -261,7 +247,6 @@ class AutoChatSession:
 
                     logger.info(f"AutoChat sent: {response_text}")
 
-                    # Trigger notification callback (e.g. to Telegram)
                     if self.on_message_sent:
                         try:
                             if asyncio.iscoroutinefunction(self.on_message_sent):
@@ -274,7 +259,7 @@ class AutoChatSession:
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
-                    logger.error(f"Lỗi trong vòng lặp AutoChat: {e}")
+                    logger.error(f"Error in AutoChat loop: {e}")
                     await asyncio.sleep(5.0)
 
     def stop(self) -> None:
