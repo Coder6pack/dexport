@@ -178,6 +178,10 @@ You have access to the user's joined Discord servers: [{guilds_context}].
 
 Analyze the user's message:
 1. If it is a Discord operation:
+   - "cứ mỗi X phút/giây thì nhắn Y và thả react Z...", "lặp lại mỗi X phút...", "mỗi 2 phút chat ...":
+     -> action: "loop_task", interval: <integer seconds, e.g. 120 for 2 mins, 300 for 5 mins>, channel: "<channel or null>", message: "<message text or null>", emoji: "<emoji or null>", count: <integer react count, default 5>, guild: "<guild or null>"
+   - "dừng lặp", "tắt lặp", "hủy lặp", "stop loop", "unloop":
+     -> action: "unloop_task"
    - "thả react / thả tim / thả cảm xúc / react emoji <emoji> cho N tin gần nhất trong kênh X":
      -> action: "react", emoji: "<emoji, e.g. 🔥, ❤️, 👍, 😂, 🚀>", count: <integer, e.g. 5>, channel: "<channel or null>", user: "<user or null>", guild: "<guild or null>"
    - "theo dõi / chờ tin nhắn của X", "khi nào X nhắn tin thì báo", "chờ X nhắn", "stalk X":
@@ -192,20 +196,22 @@ Analyze the user's message:
 
    Return JSON format:
    {{
-     "action": "summarize" | "read" | "send_message" | "react" | "autochat_on" | "autochat_off" | "watch_user" | "unwatch_user" | "list_guilds" | "list_channels" | "status",
+     "action": "summarize" | "read" | "send_message" | "react" | "autochat_on" | "autochat_off" | "loop_task" | "unloop_task" | "watch_user" | "unwatch_user" | "list_guilds" | "list_channels" | "status",
      "guild": "<Closest matching server name from list, or null>",
      "channel": "<Channel name mentioned, or null>",
      "user": "<Username/ID to filter or watch if any, or null>",
-     "emoji": "<Emoji character if action is react, e.g. 🔥, ❤️, 👍, or null>",
-     "count": <Integer count if action is react or read, or null>,
+     "interval": <Integer seconds for loop_task, e.g. 120, or null>,
+     "emoji": "<Emoji character if action is react or loop_task, e.g. 🔥, ❤️, 👍, or null>",
+     "count": <Integer count if action is react, read, or loop_task, or null>,
      "since": "<'today', 'yesterday', '3d', '24h', '1w', 'YYYY-MM-DD' or null>",
      "until": "<'YYYY-MM-DD' or null>",
      "query": "<Search keywords if any, or null>",
      "limit": <Integer message limit, or null>,
-     "message": "<Message text to send if send_message, or null>",
+     "message": "<Message text to send if send_message or loop_task, or null>",
      "prompt": "<Persona style prompt if autochat_on, or null>",
      "model": "<Specific AI model requested if any, or null>"
    }}
+
 
 
 
@@ -289,6 +295,10 @@ class TelegramBotDaemon:
         self.user_watcher: Optional[Any] = None
         self.watcher_task: Optional[asyncio.Task] = None
 
+        # Periodic Loop Task
+        self.periodic_loop: Optional[Any] = None
+        self.loop_task_async: Optional[asyncio.Task] = None
+
     def _get_keyboard(self) -> Dict[str, Any]:
         """Generate interactive persistent reply keyboard for Telegram."""
         if self.is_paused:
@@ -302,13 +312,14 @@ class TelegramBotDaemon:
 
         autochat_btn = "🔴 Disable Auto-Chat" if (self.autochat_session and self.autochat_session.is_running) else "🤖 Enable Auto-Chat"
         watcher_btn = "🔴 Stop Watcher" if (self.user_watcher and self.user_watcher.is_running) else "👀 Watch User"
+        loop_btn = "🔴 Stop Loop" if (self.periodic_loop and self.periodic_loop.is_running) else "🔄 Auto Loop"
         return {
             "keyboard": [
                 [{"text": "📊 Summarize Today"}, {"text": "💬 Read Recent"}],
-                [{"text": autochat_btn}, {"text": watcher_btn}],
-                [{"text": "⚙️ Settings & Models"}, {"text": "🏰 Servers List"}],
-                [{"text": "👤 Profile & Status"}, {"text": "⏸️ Pause Bot"}],
-                [{"text": "❓ Help"}],
+                [{"text": autochat_btn}, {"text": loop_btn}],
+                [{"text": watcher_btn}, {"text": "⚙️ Settings & Models"}],
+                [{"text": "🏰 Servers List"}, {"text": "👤 Profile & Status"}],
+                [{"text": "⏸️ Pause Bot"}, {"text": "❓ Help"}],
             ],
             "resize_keyboard": True,
             "persistent": True,
@@ -374,6 +385,22 @@ class TelegramBotDaemon:
             )
             await self.bot.send_message(self.last_active_chat_id, msg, reply_markup=self._get_keyboard())
 
+    async def _on_loop_tick(self, info: Dict[str, Any]) -> None:
+        """Notify user on Telegram whenever a periodic loop task runs."""
+        if self.last_active_chat_id:
+            msg_line = f"\n💬 Sent: \"{info['message_sent']}\"" if info.get("message_sent") else ""
+            react_line = f"\n🔥 Reacted {info['react_emoji']} to {info['react_count']} messages" if info.get("react_emoji") else ""
+            next_mins = info['next_in_seconds'] // 60
+            next_secs = info['next_in_seconds'] % 60
+            time_str = f"{next_mins}m {next_secs}s" if next_mins > 0 else f"{next_secs}s"
+
+            msg = (
+                f"🔄 **[Auto-Loop #{info['tick']}] #{info['channel_name']} ({info['guild_name']})**"
+                f"{msg_line}{react_line}\n\n"
+                f"🕒 `{info['timestamp']}` | Lần tiếp theo sau: `{time_str}`"
+            )
+            await self.bot.send_message(self.last_active_chat_id, msg, reply_markup=self._get_keyboard())
+
     async def start(self) -> None:
         """Start long-polling loop."""
         bot_info = await self.bot.get_me()
@@ -404,7 +431,7 @@ class TelegramBotDaemon:
                 await asyncio.sleep(2.0)
 
     def stop(self) -> None:
-        """Stop the daemon loop, active autochat, and watchers."""
+        """Stop the daemon loop, active autochat, watchers, and periodic loops."""
         self._is_running = False
         if self.autochat_session:
             self.autochat_session.stop()
@@ -414,6 +441,11 @@ class TelegramBotDaemon:
             self.user_watcher.stop()
         if self.watcher_task and not self.watcher_task.done():
             self.watcher_task.cancel()
+        if self.periodic_loop:
+            self.periodic_loop.stop()
+        if self.loop_task_async and not self.loop_task_async.done():
+            self.loop_task_async.cancel()
+
 
 
     async def _process_callback_query(self, cb: Dict[str, Any]) -> None:
@@ -501,7 +533,22 @@ class TelegramBotDaemon:
         elif text == "🔴 Stop Watcher":
             await self._handle_slash_command(chat_id, "/unwatch", msg)
             return
+        elif text == "🔄 Auto Loop":
+            help_msg = (
+                "🔄 **Auto Loop (Tác vụ lặp định kỳ)**\n\n"
+                "Bạn có thể nhắn tin bằng tiếng Việt tự nhiên:\n"
+                "• *\"Cứ mỗi 2 phút thì chat lên kênh cu-sắc câu 'chẩm chéo ae ơi' và thả react 🔥 cho 5 tin\"*\n"
+                "• *\"Mỗi 5 phút nhắn /checkin vào kênh cu-sắc\"*\n\n"
+                "👉 Hoặc dùng lệnh: `/loop 2m cu-sắc Chào anh em`\n"
+                "👉 Để dừng: Bấm `[🔴 Stop Loop]` hoặc gõ `/unloop`"
+            )
+            await self.bot.send_message(chat_id, help_msg, reply_markup=self._get_keyboard())
+            return
+        elif text == "🔴 Stop Loop":
+            await self._handle_slash_command(chat_id, "/unloop", msg)
+            return
         elif text in ("⚙️ Settings & Models", "/settings", "/model", "/models"):
+
             await self._send_settings_menu(chat_id)
             return
         elif text == "🏰 Servers List":
@@ -763,6 +810,90 @@ class TelegramBotDaemon:
             except Exception as e:
                 await self.bot.send_message(chat_id, f"❌ Lỗi thả react: `{e}`")
 
+        elif cmd in ("/loop", "/cron", "/repeat"):
+            sub_cmd = cmd_parts[1].lower() if len(cmd_parts) > 1 else "status"
+
+            if sub_cmd in ("off", "stop"):
+                if self.periodic_loop:
+                    self.periodic_loop.stop()
+                    self.periodic_loop = None
+                if self.loop_task_async and not self.loop_task_async.done():
+                    self.loop_task_async.cancel()
+                    self.loop_task_async = None
+                await self.bot.send_message(chat_id, "🔴 **Đã dừng tác vụ lặp định kỳ (Auto Loop) thành công.**", reply_markup=self._get_keyboard())
+
+            elif sub_cmd == "status":
+                if self.periodic_loop and self.periodic_loop.is_running:
+                    p = self.periodic_loop
+                    status_text = (
+                        f"🟢 **Auto Loop ĐANG CHẠY:**\n"
+                        f"• Server: **{p.guild_name}** | Kênh: **#{p.channel_name}**\n"
+                        f"• Chu kỳ: Mỗi **{int(p.interval_seconds)}s** ({int(p.interval_seconds/60)} phút)\n"
+                        f"• Tin nhắn tự gửi: \"{p.message or 'Không'}\"\n"
+                        f"• Thả react: `{p.react_emoji or 'Không'}` (cho {p.react_count} tin)\n"
+                        f"• Đã chạy: `{p.tick_count}` lần"
+                    )
+                else:
+                    status_text = (
+                        "⚪ **Auto Loop hiện ĐANG TẮT.**\n"
+                        "👉 Nhắn tin ví dụ: *\"Cứ mỗi 2 phút chat vào kênh cu-sắc câu 'chẩm chéo ae ơi' và thả react 🔥 cho 5 tin\"*"
+                    )
+                await self.bot.send_message(chat_id, status_text, reply_markup=self._get_keyboard())
+
+            else:
+                raw_interval = cmd_parts[1]
+                interval_secs = 120.0
+                try:
+                    if raw_interval.endswith("m") or raw_interval.endswith("p"):
+                        interval_secs = float(raw_interval[:-1]) * 60
+                    elif raw_interval.endswith("s"):
+                        interval_secs = float(raw_interval[:-1])
+                    else:
+                        val = float(raw_interval)
+                        interval_secs = val * 60 if val < 15 else val
+                except ValueError:
+                    interval_secs = 120.0
+
+                channel_arg = cmd_parts[2] if len(cmd_parts) > 2 else "ai-lười-chat-tổng"
+                msg_arg = " ".join(cmd_parts[3:]) if len(cmd_parts) > 3 else None
+
+                if self.periodic_loop:
+                    self.periodic_loop.stop()
+
+                from .scheduler import PeriodicLoopTask
+                self.periodic_loop = PeriodicLoopTask(
+                    guild_name="Cú Đêm AI",
+                    channel_name=channel_arg,
+                    interval_seconds=interval_secs,
+                    message=msg_arg,
+                    react_emoji="🔥",
+                    react_count=5,
+                    port=self.cdp_port,
+                    on_tick=self._on_loop_tick,
+                )
+                self.loop_task_async = asyncio.create_task(self.periodic_loop.start())
+
+                await self.bot.send_message(
+                    chat_id,
+                    f"🟢 **Đã kích hoạt AUTO LOOP định kỳ!**\n\n"
+                    f"• Server: **Cú Đêm AI** | Kênh: **#{channel_arg}**\n"
+                    f"• Chu kỳ: Cứ mỗi **{int(interval_secs)}s** ({int(interval_secs/60)} phút)\n"
+                    f"• Tin nhắn tự gửi: \"{msg_arg or 'Không'}\"\n"
+                    f"• Tự động thả react: 🔥 cho 5 tin gần nhất\n\n"
+                    f"👉 Để tắt: Bấm `[🔴 Stop Loop]` hoặc gõ `/unloop`",
+                    reply_markup=self._get_keyboard(),
+                )
+
+        elif cmd in ("/unloop", "/stoploop"):
+            if self.periodic_loop:
+                self.periodic_loop.stop()
+                self.periodic_loop = None
+            if self.loop_task_async and not self.loop_task_async.done():
+                self.loop_task_async.cancel()
+                self.loop_task_async = None
+            await self.bot.send_message(chat_id, "🔴 **Đã dừng tác vụ lặp định kỳ (Auto Loop) thành công.**", reply_markup=self._get_keyboard())
+
+
 
 
         elif cmd == "/status":
@@ -1005,7 +1136,54 @@ class TelegramBotDaemon:
             except Exception as e:
                 await self.bot.send_message(chat_id, f"❌ Lỗi thả react: `{e}`")
 
+        elif action == "loop_task":
+            interval_val = intent.get("interval") or 120
+            ch = channel_name or "cu-sắc"
+            msg_to_send = intent.get("message")
+            react_e = intent.get("emoji") or "🔥"
+            react_c = intent.get("count") or 5
+            g_name = guild_name or (guilds[0]["name"] if guilds else "Cú Đêm AI")
+
+            if self.periodic_loop:
+                self.periodic_loop.stop()
+
+            from .scheduler import PeriodicLoopTask
+            self.periodic_loop = PeriodicLoopTask(
+                guild_name=g_name,
+                channel_name=ch,
+                interval_seconds=float(interval_val),
+                message=msg_to_send,
+                react_emoji=react_e,
+                react_count=react_c,
+                port=self.cdp_port,
+                on_tick=self._on_loop_tick,
+            )
+            self.loop_task_async = asyncio.create_task(self.periodic_loop.start())
+
+            mins = int(interval_val / 60)
+            secs = int(interval_val % 60)
+            interval_str = f"{mins} phút" if secs == 0 else f"{interval_val} giây"
+
+            msg_desc = f"\n• Tin nhắn tự gửi: \"{msg_to_send}\"" if msg_to_send else ""
+            react_desc = f"\n• Tự động thả react: {react_e} cho {react_c} tin gần nhất" if react_e else ""
+
+            await self.bot.send_message(
+                chat_id,
+                f"🟢 **Đã kích hoạt LẶP ĐỊNH KỲ (Auto Loop) thành công!**\n\n"
+                f"• Server: **{g_name}**\n"
+                f"• Kênh: **#{ch}**\n"
+                f"• Chu kỳ: Cứ mỗi **{interval_str}** ({interval_val}s)"
+                f"{msg_desc}{react_desc}\n\n"
+                f"⚡ Bot sẽ gửi tin & thả react ngay đợt đầu và lặp lại liên tục.\n"
+                f"👉 Để tắt: Bấm `[🔴 Stop Loop]` hoặc nhắn *\"Dừng lặp\"*",
+                reply_markup=self._get_keyboard(),
+            )
+
+        elif action == "unloop_task":
+            await self._handle_slash_command(chat_id, "/unloop", msg)
+
         elif action == "autochat_on":
+
 
             ch = channel_name or "general"
             custom_p = intent.get("prompt") or "Reply naturally, concisely, and appropriately to conversation topics."

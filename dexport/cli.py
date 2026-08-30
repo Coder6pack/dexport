@@ -663,6 +663,54 @@ async def cmd_autochat(
         console.print("\n[yellow]AutoChat stopped.[/yellow]")
 
 
+@app.command(name="loop", help="Execute recurring scheduled actions (periodic messages & auto-reactions).")
+@async_command
+async def cmd_loop(
+    guild: str = typer.Option(..., "--guild", "-g", help="Server name or ID"),
+    channel: str = typer.Option(..., "--channel", "-c", help="Channel name or ID"),
+    interval: float = typer.Option(120.0, "--interval", "-i", help="Interval between loops in seconds (default: 120s)"),
+    message: Optional[str] = typer.Option(None, "--message", "-m", help="Message content to send periodically"),
+    emoji: Optional[str] = typer.Option(None, "--emoji", "-e", help="Emoji to react with (e.g. 🔥, 👍, ❤️)"),
+    count: int = typer.Option(5, "--count", "-n", help="Number of recent messages to react to (default: 5)"),
+    port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="CDP Debugging Port"),
+):
+    from .scheduler import PeriodicLoopTask
+
+    console.print(
+        Panel(
+            f"Activating [bold cyan]Periodic Loop Automation[/bold cyan]...\n\n"
+            f"• Server: [bold yellow]{guild}[/bold yellow]\n"
+            f"• Channel: [bold green]#{channel}[/bold green]\n"
+            f"• Schedule: [bold white]Every {int(interval)}s ({interval/60:.1f} mins)[/bold white]\n"
+            f"• Message to send: [italic green]\"{message or 'None'}\"[/italic green]\n"
+            f"• Auto-React: [bold magenta]{emoji or 'None'}[/bold magenta] (for {count} recent messages)\n\n"
+            f"[dim]Press Ctrl+C to stop.[/dim]",
+            title="🔄 [bold cyan]dexport Auto Loop[/bold cyan]",
+            border_style="cyan",
+        )
+    )
+
+    task = PeriodicLoopTask(
+        guild_name=guild,
+        channel_name=channel,
+        interval_seconds=interval,
+        message=message,
+        react_emoji=emoji,
+        react_count=count,
+        port=port,
+        on_tick=lambda info: console.print(
+            f"[bold cyan]✔ [Loop #{info['tick']} at {info['timestamp']}][/bold cyan] Sent: \"{info['message_sent']}\" | Reacted {info['react_emoji']} ({info['react_count']} msgs)"
+        ),
+    )
+
+    try:
+        await task.start()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        task.stop()
+        console.print("\n[yellow]Periodic loop stopped.[/yellow]")
+
+
+
 def main():
     app()
 
