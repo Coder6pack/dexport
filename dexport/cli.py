@@ -462,27 +462,42 @@ async def cmd_reply(
     console.print(f"[bold green]✔ Replied to message {msg_id}:[/bold green] {message} [dim](New ID: {new_id})[/dim]\n")
 
 
-@app.command(name="react", help="Add an emoji reaction to a message.")
+@app.command(name="react", help="Add an emoji reaction to specific or recent messages in a channel.")
 @async_command
 async def cmd_react(
     guild: str = typer.Option(..., "--guild", "-g", help="Server name or ID"),
     channel: str = typer.Option(..., "--channel", "-c", help="Channel name or ID"),
-    msg_id: str = typer.Option(..., "--msg-id", help="Message ID"),
     emoji: str = typer.Option(..., "--emoji", "-e", help="Emoji to react with (e.g. 🔥, 👍, ❤️, 😎)"),
+    msg_id: Optional[str] = typer.Option(None, "--msg-id", help="Specific Message ID to react to"),
+    count: int = typer.Option(1, "--count", "-n", help="Number of recent messages to react to (default: 1)"),
+    user: Optional[str] = typer.Option(None, "--user", "-u", help="Filter recent messages by author name/ID"),
     port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="CDP Debugging Port"),
     auto_restart: bool = typer.Option(True, "--auto-restart/--no-restart"),
 ):
-    with console.status(f"[bold green]Adding reaction '{emoji}' to message {msg_id}...[/bold green]"):
+    with console.status(f"[bold green]Adding reaction '{emoji}' to messages in #{channel}...[/bold green]"):
         try:
             async with DiscordClient(port=port, auto_restart=auto_restart) as client:
                 g_info = await client.resolve_guild(guild)
                 c_info = await client.resolve_channel(g_info["id"], channel)
-                await client.add_reaction(c_info["id"], msg_id, emoji=emoji)
+
+                if msg_id:
+                    await client.add_reaction(c_info["id"], msg_id, emoji=emoji)
+                    console.print(f"[bold green]✔ Added {emoji} reaction to message {msg_id} successfully![/bold green]\n")
+                else:
+                    reacted = await client.add_batch_reactions(
+                        channel_id=c_info["id"],
+                        emoji=emoji,
+                        count=count,
+                        user_query=user,
+                    )
+                    console.print(f"[bold green]✔ Added {emoji} reaction to {len(reacted)} messages in #{c_info['name']} successfully![/bold green]")
+                    for r in reacted:
+                        console.print(f"  • [dim]{r['author']}:[/dim] \"{r['content']}\" [dim](ID: {r['id']})[/dim]")
+                    console.print()
         except Exception as e:
             console.print(f"[bold red]❌ Failed to add reaction:[/bold red] {e}")
             sys.exit(1)
 
-    console.print(f"[bold green]✔ Added {emoji} reaction to message {msg_id} successfully![/bold green]\n")
 
 
 @app.command(name="watch", help="Live-stream new messages from a channel in real time (optionally filter by user).")

@@ -178,6 +178,8 @@ You have access to the user's joined Discord servers: [{guilds_context}].
 
 Analyze the user's message:
 1. If it is a Discord operation:
+   - "thả react / thả tim / thả cảm xúc / react emoji <emoji> cho N tin gần nhất trong kênh X":
+     -> action: "react", emoji: "<emoji, e.g. 🔥, ❤️, 👍, 😂, 🚀>", count: <integer, e.g. 5>, channel: "<channel or null>", user: "<user or null>", guild: "<guild or null>"
    - "theo dõi / chờ tin nhắn của X", "khi nào X nhắn tin thì báo", "chờ X nhắn", "stalk X":
      -> action: "watch_user", user: "<username or display name>", channel: "<channel or null>", guild: "<guild or null>"
    - "dừng theo dõi", "tắt theo dõi", "hủy theo dõi", "unwatch":
@@ -190,10 +192,12 @@ Analyze the user's message:
 
    Return JSON format:
    {{
-     "action": "summarize" | "read" | "send_message" | "autochat_on" | "autochat_off" | "watch_user" | "unwatch_user" | "list_guilds" | "list_channels" | "status",
+     "action": "summarize" | "read" | "send_message" | "react" | "autochat_on" | "autochat_off" | "watch_user" | "unwatch_user" | "list_guilds" | "list_channels" | "status",
      "guild": "<Closest matching server name from list, or null>",
      "channel": "<Channel name mentioned, or null>",
      "user": "<Username/ID to filter or watch if any, or null>",
+     "emoji": "<Emoji character if action is react, e.g. 🔥, ❤️, 👍, or null>",
+     "count": <Integer count if action is react or read, or null>,
      "since": "<'today', 'yesterday', '3d', '24h', '1w', 'YYYY-MM-DD' or null>",
      "until": "<'YYYY-MM-DD' or null>",
      "query": "<Search keywords if any, or null>",
@@ -202,6 +206,7 @@ Analyze the user's message:
      "prompt": "<Persona style prompt if autochat_on, or null>",
      "model": "<Specific AI model requested if any, or null>"
    }}
+
 
 
 2. If it is a greeting, natural conversation, question, coding request, explanation, or general query:
@@ -729,6 +734,36 @@ class TelegramBotDaemon:
                 self.watcher_task = None
             await self.bot.send_message(chat_id, "🔴 **Đã dừng theo dõi user thành công.**", reply_markup=self._get_keyboard())
 
+        elif cmd == "/react":
+            if len(cmd_parts) < 2:
+                await self.bot.send_message(chat_id, "⚠️ Cú pháp: `/react <emoji> [số_tin] [kênh]` (ví dụ: `/react 🔥 5 cu-sắc`)")
+                return
+            emoji_arg = cmd_parts[1]
+            count_arg = int(cmd_parts[2]) if len(cmd_parts) > 2 and cmd_parts[2].isdigit() else 5
+            channel_arg = cmd_parts[3] if len(cmd_parts) > 3 else "ai-lười-chat-tổng"
+            guild_arg = " ".join(cmd_parts[4:]) if len(cmd_parts) > 4 else "Cú Đêm AI"
+
+            await self.bot.send_chat_action(chat_id, "typing")
+            try:
+                async with DiscordClient(port=self.cdp_port, auto_restart=True) as client:
+                    g_info = await client.resolve_guild(guild_arg)
+                    c_info = await client.resolve_channel(g_info["id"], channel_arg)
+                    reacted = await client.add_batch_reactions(
+                        channel_id=c_info["id"],
+                        emoji=emoji_arg,
+                        count=count_arg,
+                    )
+                if not reacted:
+                    await self.bot.send_message(chat_id, f"⚠️ Không tìm thấy tin nhắn nào trong #{channel_arg} để thả react.")
+                    return
+                lines = [f"✔ **Đã thả react {emoji_arg} vào {len(reacted)} tin nhắn gần nhất trong #{c_info['name']} ({g_info['name']}):**\n"]
+                for r in reacted:
+                    lines.append(f"• **{r['author']}:** \"{r['content']}\" `(ID: {r['id']})`")
+                await self.bot.send_message(chat_id, "\n".join(lines))
+            except Exception as e:
+                await self.bot.send_message(chat_id, f"❌ Lỗi thả react: `{e}`")
+
+
 
         elif cmd == "/status":
             await self.bot.send_chat_action(chat_id, "typing")
@@ -944,7 +979,34 @@ class TelegramBotDaemon:
                 await self.bot.send_message(chat_id, f"❌ Send error: `{e}`")
 
 
+        elif action == "react":
+            emoji_char = intent.get("emoji") or "🔥"
+            count_val = intent.get("count") or 5
+            ch = channel_name or "ai-lười-chat-tổng"
+            await self.bot.send_chat_action(chat_id, "typing")
+            try:
+                async with DiscordClient(port=self.cdp_port, auto_restart=True) as client:
+                    g_info = await client.resolve_guild(guild_name)
+                    c_info = await client.resolve_channel(g_info["id"], ch)
+                    reacted = await client.add_batch_reactions(
+                        channel_id=c_info["id"],
+                        emoji=emoji_char,
+                        count=count_val,
+                        user_query=target_user,
+                    )
+                if not reacted:
+                    await self.bot.send_message(chat_id, f"⚠️ Không tìm thấy tin nhắn nào phù hợp trong #{c_info['name']} để thả react.")
+                    return
+                user_tag = f" của **{target_user}**" if target_user else ""
+                lines = [f"✔ **Đã thả react {emoji_char} vào {len(reacted)} tin nhắn gần nhất{user_tag} trong #{c_info['name']} ({g_info['name']}):**\n"]
+                for r in reacted:
+                    lines.append(f"• **{r['author']}:** \"{r['content']}\" `(ID: {r['id']})`")
+                await self.bot.send_message(chat_id, "\n".join(lines))
+            except Exception as e:
+                await self.bot.send_message(chat_id, f"❌ Lỗi thả react: `{e}`")
+
         elif action == "autochat_on":
+
             ch = channel_name or "general"
             custom_p = intent.get("prompt") or "Reply naturally, concisely, and appropriately to conversation topics."
             await self._handle_slash_command(chat_id, f"/autochat on {ch} {custom_p}", msg)

@@ -444,6 +444,44 @@ class DiscordClient:
         endpoint = f"/api/v9/channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me"
         return await self._request(endpoint, method="PUT")
 
+    async def add_batch_reactions(
+        self,
+        channel_id: str,
+        emoji: str,
+        count: int = 5,
+        user_query: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Add emoji reaction to the top N most recent messages in a channel."""
+        if user_query:
+            msgs, _ = await self.get_filtered_messages(
+                channel_id=channel_id,
+                user_query=user_query,
+                limit=count,
+                scan_depth=500,
+            )
+        else:
+            msgs = await self.get_messages(channel_id=channel_id, limit=count)
+
+        reacted: List[Dict[str, Any]] = []
+        for msg in msgs:
+            msg_id = msg.get("id")
+            if not msg_id:
+                continue
+            try:
+                await self.add_reaction(channel_id, msg_id, emoji=emoji)
+                author = msg.get("author", {})
+                display_name = author.get("global_name") or author.get("username", "Unknown")
+                reacted.append({
+                    "id": msg_id,
+                    "author": display_name,
+                    "content": (msg.get("content") or "")[:40],
+                })
+                await asyncio.sleep(0.2)
+            except Exception as e:
+                logger.debug(f"Failed to react to message {msg_id}: {e}")
+
+        return reacted
+
     async def delete_reaction(
         self,
         channel_id: str,
@@ -454,3 +492,4 @@ class DiscordClient:
         encoded_emoji = urllib.parse.quote(emoji.strip())
         endpoint = f"/api/v9/channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/%40me"
         return await self._request(endpoint, method="DELETE")
+
