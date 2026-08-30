@@ -485,11 +485,12 @@ async def cmd_react(
     console.print(f"[bold green]✔ Added {emoji} reaction to message {msg_id} successfully![/bold green]\n")
 
 
-@app.command(name="watch", help="Live-stream new messages from a channel in real time.")
+@app.command(name="watch", help="Live-stream new messages from a channel in real time (optionally filter by user).")
 @async_command
 async def cmd_watch(
     guild: str = typer.Option(..., "--guild", "-g", help="Server name or ID"),
     channel: str = typer.Option(..., "--channel", "-c", help="Channel name or ID"),
+    user: Optional[str] = typer.Option(None, "--user", "-u", help="Only alert when this specific user sends a message"),
     interval: float = typer.Option(2.0, "--interval", "-i", help="Polling interval in seconds"),
     port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="CDP Debugging Port"),
     auto_restart: bool = typer.Option(True, "--auto-restart/--no-restart"),
@@ -500,9 +501,10 @@ async def cmd_watch(
             c_info = await client.resolve_channel(g_info["id"], channel)
             channel_id = c_info["id"]
 
+            user_notice = f" (monitoring [bold yellow]{user}[/bold yellow] only)" if user else ""
             console.print(
                 Panel(
-                    f"Live watching channel [bold green]#{c_info.get('name')}[/bold green] in [bold yellow]{g_info['name']}[/bold yellow]...\n"
+                    f"Live watching channel [bold green]#{c_info.get('name')}[/bold green] in [bold yellow]{g_info['name']}[/bold yellow]{user_notice}...\n"
                     f"[dim]Press Ctrl+C to stop.[/dim]",
                     title="👀 [bold magenta]dexport Live Watch[/bold magenta]",
                     border_style="magenta",
@@ -512,20 +514,29 @@ async def cmd_watch(
             initial_msgs = await client.get_messages(channel_id, limit=5)
             last_seen_id = initial_msgs[0]["id"] if initial_msgs else "0"
 
-            if initial_msgs:
+            if initial_msgs and not user:
                 render_messages(console, initial_msgs, g_info["name"], c_info.get("name", channel), limit=5)
 
             while True:
                 await asyncio.sleep(interval)
                 new_msgs = await client.get_messages(channel_id, limit=20, after=last_seen_id)
                 if new_msgs:
-                    sorted_new = sorted(new_msgs, key=lambda m: m.get("id", "0"))
+                    sorted_new = sorted(new_msgs, key=lambda m: int(m.get("id", "0")))
                     for msg in sorted_new:
                         author = msg.get("author", {})
                         username = author.get("global_name") or author.get("username", "Unknown")
+                        user_id = str(author.get("id", ""))
                         timestamp = parse_timestamp(msg.get("timestamp"))
                         content = msg.get("content", "")
-                        console.print(f"[bold yellow]{username}[/bold yellow] [dim]({timestamp}):[/dim] {content}")
+
+                        if user:
+                            from unidecode import unidecode
+                            norm_u = unidecode(user).lower()
+                            if norm_u not in unidecode(username).lower() and norm_u != user_id:
+                                last_seen_id = msg["id"]
+                                continue
+
+                        console.print(f"🔔 [bold yellow]{username}[/bold yellow] [dim]({timestamp}):[/dim] {content}")
                         last_seen_id = msg["id"]
 
     except (KeyboardInterrupt, asyncio.CancelledError):
@@ -533,6 +544,7 @@ async def cmd_watch(
     except Exception as e:
         console.print(f"[bold red]❌ Watch error:[/bold red] {e}")
         sys.exit(1)
+
 
 
 @app.command(name="bot", help="Start Telegram Bot daemon for mobile remote control and AI conversation.")

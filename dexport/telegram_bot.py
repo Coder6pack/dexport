@@ -178,18 +178,22 @@ You have access to the user's joined Discord servers: [{guilds_context}].
 
 Analyze the user's message:
 1. If it is a Discord operation:
+   - "theo dõi / chờ tin nhắn của X", "khi nào X nhắn tin thì báo", "chờ X nhắn", "stalk X":
+     -> action: "watch_user", user: "<username or display name>", channel: "<channel or null>", guild: "<guild or null>"
+   - "dừng theo dõi", "tắt theo dõi", "hủy theo dõi", "unwatch":
+     -> action: "unwatch_user"
    - "vào kênh X nhắn / chat / nói chuyện", "kêu nó vào kênh X nhắn":
-     - If the user provides a specific message to send -> action: "send_message", channel: "X", message: "<exact message>"
-     - If the user asks to start auto-chatting or chatting in that channel -> action: "autochat_on", channel: "X"
-     - If the user asks to send a message without providing text (e.g. "nhắn vào kênh X một câu", "gửi lời chào vào kênh X") -> action: "send_message", channel: "X", message: null (auto-generate greeting)
+     - If specific message given -> action: "send_message", channel: "X", message: "<exact message>"
+     - If starting auto-chatting -> action: "autochat_on", channel: "X"
+     - If no message text given -> action: "send_message", channel: "X", message: null (auto-generate greeting)
    - Other actions: "summarize", "read", "autochat_off", "list_guilds", "list_channels", "status".
 
    Return JSON format:
    {{
-     "action": "summarize" | "read" | "send_message" | "autochat_on" | "autochat_off" | "list_guilds" | "list_channels" | "status",
+     "action": "summarize" | "read" | "send_message" | "autochat_on" | "autochat_off" | "watch_user" | "unwatch_user" | "list_guilds" | "list_channels" | "status",
      "guild": "<Closest matching server name from list, or null>",
      "channel": "<Channel name mentioned, or null>",
-     "user": "<Username/ID to filter if any, or null>",
+     "user": "<Username/ID to filter or watch if any, or null>",
      "since": "<'today', 'yesterday', '3d', '24h', '1w', 'YYYY-MM-DD' or null>",
      "until": "<'YYYY-MM-DD' or null>",
      "query": "<Search keywords if any, or null>",
@@ -198,6 +202,7 @@ Analyze the user's message:
      "prompt": "<Persona style prompt if autochat_on, or null>",
      "model": "<Specific AI model requested if any, or null>"
    }}
+
 
 2. If it is a greeting, natural conversation, question, coding request, explanation, or general query:
    Return JSON:
@@ -275,6 +280,10 @@ class TelegramBotDaemon:
         self.autochat_task: Optional[asyncio.Task] = None
         self.last_active_chat_id: Optional[int] = None
 
+        # Targeted User Watcher
+        self.user_watcher: Optional[Any] = None
+        self.watcher_task: Optional[asyncio.Task] = None
+
     def _get_keyboard(self) -> Dict[str, Any]:
         """Generate interactive persistent reply keyboard for Telegram."""
         if self.is_paused:
@@ -287,12 +296,14 @@ class TelegramBotDaemon:
             }
 
         autochat_btn = "🔴 Disable Auto-Chat" if (self.autochat_session and self.autochat_session.is_running) else "🤖 Enable Auto-Chat"
+        watcher_btn = "🔴 Stop Watcher" if (self.user_watcher and self.user_watcher.is_running) else "👀 Watch User"
         return {
             "keyboard": [
                 [{"text": "📊 Summarize Today"}, {"text": "💬 Read Recent"}],
-                [{"text": autochat_btn}, {"text": "🏰 Servers List"}],
-                [{"text": "⚙️ Settings & Models"}, {"text": "👤 Profile & Status"}],
-                [{"text": "⏸️ Pause Bot"}, {"text": "❓ Help"}],
+                [{"text": autochat_btn}, {"text": watcher_btn}],
+                [{"text": "⚙️ Settings & Models"}, {"text": "🏰 Servers List"}],
+                [{"text": "👤 Profile & Status"}, {"text": "⏸️ Pause Bot"}],
+                [{"text": "❓ Help"}],
             ],
             "resize_keyboard": True,
             "persistent": True,
@@ -336,6 +347,28 @@ class TelegramBotDaemon:
             )
             await self.bot.send_message(self.last_active_chat_id, msg, reply_markup=self._get_keyboard())
 
+    async def _on_watched_message(self, info: Dict[str, Any]) -> None:
+        """Notify user on Telegram in real time whenever the targeted user sends a message."""
+        if self.last_active_chat_id:
+            ref_snippet = ""
+            ref = info.get("referenced_message")
+            if ref:
+                ref_author = ref.get("author", {}).get("global_name") or ref.get("author", {}).get("username", "Someone")
+                ref_content = (ref.get("content") or "")[:40]
+                ref_snippet = f"\n> *[Replying to {ref_author}: {ref_content}...]*"
+
+            att_info = ""
+            if info.get("attachments"):
+                att_info = f"\n📎 Attachments: {len(info['attachments'])} files"
+
+            msg = (
+                f"🔔 **[Live Alert: {info['author_name']} {info['author_tag']}]**\n"
+                f"🏰 **{info['guild_name']}** ➔ **#{info['channel_name']}**\n\n"
+                f"\"{info['content']}\"{ref_snippet}{att_info}\n\n"
+                f"🕒 `{info['timestamp']}` | `[ID: {info['message_id']}]`"
+            )
+            await self.bot.send_message(self.last_active_chat_id, msg, reply_markup=self._get_keyboard())
+
     async def start(self) -> None:
         """Start long-polling loop."""
         bot_info = await self.bot.get_me()
@@ -366,12 +399,17 @@ class TelegramBotDaemon:
                 await asyncio.sleep(2.0)
 
     def stop(self) -> None:
-        """Stop the daemon loop and any active autochat."""
+        """Stop the daemon loop, active autochat, and watchers."""
         self._is_running = False
         if self.autochat_session:
             self.autochat_session.stop()
         if self.autochat_task and not self.autochat_task.done():
             self.autochat_task.cancel()
+        if self.user_watcher:
+            self.user_watcher.stop()
+        if self.watcher_task and not self.watcher_task.done():
+            self.watcher_task.cancel()
+
 
     async def _process_callback_query(self, cb: Dict[str, Any]) -> None:
         """Handle inline button clicks for model switching."""
@@ -445,6 +483,19 @@ class TelegramBotDaemon:
         elif text == "🔴 Disable Auto-Chat":
             await self._handle_slash_command(chat_id, "/autochat off", msg)
             return
+        elif text == "👀 Watch User":
+            help_msg = (
+                "👀 **Targeted User Watcher (Theo dõi ngầm)**\n\n"
+                "Gõ `/watch <tên_user> [kênh]` hoặc nhắn bằng tiếng Việt tự nhiên:\n"
+                "• *\"Theo dõi tin nhắn của Demonthorn\"*\n"
+                "• *\"Chờ tin nhắn của Demonthorn trong kênh cu-sắc\"*\n\n"
+                "🔔 Bất cứ khi nào user này nhắn tin, bot sẽ đẩy thông báo tức thì về Telegram!"
+            )
+            await self.bot.send_message(chat_id, help_msg, reply_markup=self._get_keyboard())
+            return
+        elif text == "🔴 Stop Watcher":
+            await self._handle_slash_command(chat_id, "/unwatch", msg)
+            return
         elif text in ("⚙️ Settings & Models", "/settings", "/model", "/models"):
             await self._send_settings_menu(chat_id)
             return
@@ -462,6 +513,12 @@ class TelegramBotDaemon:
             if self.autochat_task and not self.autochat_task.done():
                 self.autochat_task.cancel()
                 self.autochat_task = None
+            if self.user_watcher:
+                self.user_watcher.stop()
+                self.user_watcher = None
+            if self.watcher_task and not self.watcher_task.done():
+                self.watcher_task.cancel()
+                self.watcher_task = None
             await self.bot.send_message(
                 chat_id,
                 "💤 **Bot Paused (Standby).**\nTap `[▶️ Resume Bot]` whenever you wish to reactivate.",
@@ -471,6 +528,7 @@ class TelegramBotDaemon:
         elif text in ("❓ Help", "/help"):
             await self._handle_slash_command(chat_id, "/help", msg)
             return
+
 
         # Handle Slash Commands
         if text.startswith("/"):
@@ -603,6 +661,74 @@ class TelegramBotDaemon:
                     f"👉 To stop: Tap `[🔴 Disable Auto-Chat]` below!",
                     reply_markup=self._get_keyboard(),
                 )
+
+        elif cmd in ("/watch", "/stalk"):
+            sub_cmd = cmd_parts[1].lower() if len(cmd_parts) > 1 else "status"
+
+            if sub_cmd in ("off", "stop"):
+                if self.user_watcher:
+                    self.user_watcher.stop()
+                    self.user_watcher = None
+                if self.watcher_task and not self.watcher_task.done():
+                    self.watcher_task.cancel()
+                    self.watcher_task = None
+                await self.bot.send_message(chat_id, "🔴 **Đã dừng theo dõi user thành công.**", reply_markup=self._get_keyboard())
+
+            elif sub_cmd == "status":
+                if self.user_watcher and self.user_watcher.is_running:
+                    w = self.user_watcher
+                    status_text = (
+                        f"🟢 **User Watcher ĐANG CHẠY:**\n"
+                        f"• Target User: **{w.target_user}**\n"
+                        f"• Server: **{w.guild_name}**\n"
+                        f"• Channel: **#{w.channel_name}**\n"
+                        f"• Tin nhắn đã phát hiện: `{w.stats.get('detected_count', 0)}` tin"
+                    )
+                else:
+                    status_text = (
+                        "⚪ **Watcher hiện ĐANG TẮT.**\n"
+                        "👉 Gõ `/watch <username> [kênh]` hoặc nhắn *\"Theo dõi tin nhắn của <tên>\"* để kích hoạt."
+                    )
+                await self.bot.send_message(chat_id, status_text, reply_markup=self._get_keyboard())
+
+            else:
+                target_user = cmd_parts[1]
+                channel_arg = cmd_parts[2] if len(cmd_parts) > 2 else "ai-lười-chat-tổng"
+                guild_arg = " ".join(cmd_parts[3:]) if len(cmd_parts) > 3 else "Cú Đêm AI"
+
+                if self.user_watcher:
+                    self.user_watcher.stop()
+
+                from .watcher import UserWatcher
+                self.user_watcher = UserWatcher(
+                    guild_name=guild_arg,
+                    channel_name=channel_arg,
+                    target_user=target_user,
+                    on_message=self._on_watched_message,
+                    port=self.cdp_port,
+                )
+                self.watcher_task = asyncio.create_task(self.user_watcher.start())
+
+                await self.bot.send_message(
+                    chat_id,
+                    f"🟢 **Đã kích hoạt THEO DÕI NGẦM (Live Watcher)!**\n\n"
+                    f"• Target User: **{target_user}**\n"
+                    f"• Server: **{guild_arg}**\n"
+                    f"• Kênh: **#{channel_arg}**\n\n"
+                    f"🔔 Bất cứ khi nào **{target_user}** nhắn tin trong kênh này, bot sẽ gửi thông báo tức thì về Telegram cho bạn!\n"
+                    f"👉 Để tắt: Bấm `[🔴 Stop Watcher]` hoặc gõ `/unwatch`",
+                    reply_markup=self._get_keyboard(),
+                )
+
+        elif cmd in ("/unwatch", "/stopwatch"):
+            if self.user_watcher:
+                self.user_watcher.stop()
+                self.user_watcher = None
+            if self.watcher_task and not self.watcher_task.done():
+                self.watcher_task.cancel()
+                self.watcher_task = None
+            await self.bot.send_message(chat_id, "🔴 **Đã dừng theo dõi user thành công.**", reply_markup=self._get_keyboard())
+
 
         elif cmd == "/status":
             await self.bot.send_chat_action(chat_id, "typing")
@@ -826,8 +952,20 @@ class TelegramBotDaemon:
         elif action == "autochat_off":
             await self._handle_slash_command(chat_id, "/autochat off", msg)
 
+        elif action == "watch_user":
+            target_user = intent.get("user")
+            if not target_user:
+                await self.bot.send_message(chat_id, "⚠️ Hãy chỉ định rõ tên người dùng bạn muốn theo dõi (ví dụ: *Theo dõi tin nhắn của Demonthorn*).")
+                return
+            ch = channel_name or "ai-lười-chat-tổng"
+            await self._handle_slash_command(chat_id, f"/watch {target_user} {ch} {guild_name}", msg)
+
+        elif action == "unwatch_user":
+            await self._handle_slash_command(chat_id, "/watch off", msg)
+
         elif action == "list_guilds":
             await self._handle_slash_command(chat_id, "/guilds", msg)
+
 
         elif action == "list_channels":
             await self._handle_slash_command(chat_id, f"/channels {guild_name}", msg)
