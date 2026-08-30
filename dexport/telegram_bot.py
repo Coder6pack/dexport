@@ -177,17 +177,23 @@ You are the dexport AI Assistant and personal intelligent Discord Agent on Teleg
 You have access to the user's joined Discord servers: [{guilds_context}].
 
 Analyze the user's message:
-1. If it is an explicit Discord operation (summarize, read messages, send message, toggle autochat, list servers, list channels, status):
-   Return JSON with the corresponding fields:
+1. If it is a Discord operation:
+   - "vào kênh X nhắn / chat / nói chuyện", "kêu nó vào kênh X nhắn":
+     - If the user provides a specific message to send -> action: "send_message", channel: "X", message: "<exact message>"
+     - If the user asks to start auto-chatting or chatting in that channel -> action: "autochat_on", channel: "X"
+     - If the user asks to send a message without providing text (e.g. "nhắn vào kênh X một câu", "gửi lời chào vào kênh X") -> action: "send_message", channel: "X", message: null (auto-generate greeting)
+   - Other actions: "summarize", "read", "autochat_off", "list_guilds", "list_channels", "status".
+
+   Return JSON format:
    {{
      "action": "summarize" | "read" | "send_message" | "autochat_on" | "autochat_off" | "list_guilds" | "list_channels" | "status",
-     "guild": "<Closest matching server name from the list, or null>",
+     "guild": "<Closest matching server name from list, or null>",
      "channel": "<Channel name mentioned, or null>",
      "user": "<Username/ID to filter if any, or null>",
      "since": "<'today', 'yesterday', '3d', '24h', '1w', 'YYYY-MM-DD' or null>",
      "until": "<'YYYY-MM-DD' or null>",
      "query": "<Search keywords if any, or null>",
-     "limit": <Integer message limit: 100 for summarize, 20 for read>,
+     "limit": <Integer message limit, or null>,
      "message": "<Message text to send if send_message, or null>",
      "prompt": "<Persona style prompt if autochat_on, or null>",
      "model": "<Specific AI model requested if any, or null>"
@@ -197,14 +203,15 @@ Analyze the user's message:
    Return JSON:
    {{
      "action": "chat",
-     "reply": "<A helpful, intelligent, friendly, natural response in English>"
+     "reply": "<A helpful, intelligent, friendly, natural response in English or Vietnamese matching user language>"
    }}
 
 RULES:
 - Return raw JSON only (no markdown ```json formatting).
-- If the user greets (e.g. "Hello", "Hi", "Hey"), action = "chat" and write a friendly greeting ready to help.
-- If the user asks general questions (coding, tech, advice, reasoning), action = "chat" and answer thoroughly like a smart AI agent.
+- If the user greets (e.g. "Hello", "Hi", "Hey", "Chào"), action = "chat".
+- If the user asks general questions, action = "chat" and answer thoroughly.
 """
+
 
     prompt = f"User Request: \"{user_prompt}\""
 
@@ -778,15 +785,30 @@ class TelegramBotDaemon:
                 await self.bot.send_message(chat_id, f"❌ Read error: `{e}`")
 
         elif action == "send_message":
+            if not channel_name:
+                channel_name = "general"
             msg_content = intent.get("message")
-            if not channel_name or not msg_content:
-                await self.bot.send_message(chat_id, "⚠️ Specify channel and message content (e.g. *Send 'Hello team' to general*).")
-                return
             await self.bot.send_chat_action(chat_id, "typing")
             try:
                 async with DiscordClient(port=self.cdp_port, auto_restart=True) as client:
                     g_info = await client.resolve_guild(guild_name)
                     c_info = await client.resolve_channel(g_info["id"], channel_name)
+
+                    if not msg_content:
+                        from .autochat import generate_persona_reply
+                        user = await client.get_current_user()
+                        recent_msgs = await client.get_messages(c_info["id"], limit=10)
+                        recent_sorted = sorted(recent_msgs, key=lambda m: int(m.get("id", "0")))
+                        generated = await generate_persona_reply(
+                            messages=recent_sorted,
+                            current_user=user,
+                            channel_name=c_info["name"],
+                            guild_name=g_info["name"],
+                            custom_prompt="Viết 1 câu chào hỏi hoặc tin nhắn ngắn tự nhiên (1 câu) thân thiện với mọi người trong kênh này.",
+                            model=self.default_model,
+                        )
+                        msg_content = generated or "Chào anh em!"
+
                     res = await client.send_message(c_info["id"], content=msg_content)
                 await self.bot.send_message(
                     chat_id,
@@ -794,6 +816,7 @@ class TelegramBotDaemon:
                 )
             except Exception as e:
                 await self.bot.send_message(chat_id, f"❌ Send error: `{e}`")
+
 
         elif action == "autochat_on":
             ch = channel_name or "general"
