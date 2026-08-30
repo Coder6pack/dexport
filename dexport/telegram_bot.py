@@ -703,9 +703,10 @@ class TelegramBotDaemon:
                         since=since,
                         until=until,
                         text_query=query,
-                        limit=max(limit, 500) if since else limit,
-                        scan_depth=50000,
+                        limit=max(limit, 20000) if since else limit,
+                        scan_depth=100000,
                     )
+
 
 
                 if not messages:

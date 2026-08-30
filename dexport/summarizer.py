@@ -125,6 +125,42 @@ def generate_local_summary(
 # Multi-Model AI Dispatcher
 # =============================================================================
 
+def optimize_transcript(messages: List[Dict[str, Any]], max_items: int = 120) -> List[Dict[str, Any]]:
+    """
+    Select the most informative, substantive messages evenly distributed across the timeframe.
+    Prevents LLM token overflow and timeout while preserving maximum semantic value.
+    """
+    if len(messages) <= max_items:
+        return sorted(messages, key=lambda m: m.get("id", "0"))
+
+    substantive = []
+    for m in messages:
+        c = (m.get("content") or "").strip()
+        has_ref = bool(m.get("referenced_message"))
+        has_att = bool(m.get("attachments"))
+        has_url = "http://" in c or "https://" in c
+
+        score = 0
+        if len(c) > 30: score += 2
+        if len(c) > 80: score += 2
+        if has_ref: score += 3
+        if has_att: score += 3
+        if has_url: score += 3
+        if c.lower() in (":v", "=)))", "ok", "uh", ":))", "cc", "vl", "=))", ":)))"):
+            score = -1
+
+        if score > 0:
+            substantive.append((score, m))
+
+    if len(substantive) <= max_items:
+        return sorted([m for _, m in substantive], key=lambda m: m.get("id", "0"))
+
+    # Select representative messages spaced across the entire timeline
+    step = len(substantive) / max_items
+    selected = [substantive[int(i * step)][1] for i in range(max_items)]
+    return sorted(selected, key=lambda m: m.get("id", "0"))
+
+
 def build_summary_prompt(
     messages: List[Dict[str, Any]],
     target_user_name: Optional[str],
@@ -132,9 +168,9 @@ def build_summary_prompt(
     channel_name: str,
 ) -> str:
     """Construct a clean, structured transcript prompt for the AI."""
-    sorted_msgs = sorted(messages, key=lambda m: m.get("id", "0"))
+    optimized_msgs = optimize_transcript(messages, max_items=120)
     lines = []
-    for msg in sorted_msgs:
+    for msg in optimized_msgs:
         ts = parse_timestamp(msg.get("timestamp"))
         author = msg.get("author", {}).get("global_name") or msg.get("author", {}).get("username", "Unknown")
         content = msg.get("content", "")
@@ -147,21 +183,23 @@ def build_summary_prompt(
 
     chat_transcript = "\n".join(lines)
     target_desc = f"from '{target_user_name}'" if target_user_name else "in the discussion"
+    timeframe_note = f" (Sampled {len(optimized_msgs)} key messages from {len(messages)} total messages across the timeframe)" if len(messages) > len(optimized_msgs) else ""
 
     return f"""
-You are an expert conversation analyst. Review the chat transcript {target_desc} in channel #{channel_name} (Server: {guild_name}) below and write a comprehensive, well-structured SUMMARY REPORT in English.
+You are an expert conversation analyst. Review the chat transcript {target_desc} in channel #{channel_name} (Server: {guild_name}){timeframe_note} below and write a comprehensive, well-structured SUMMARY REPORT in English.
 
 Required Structure:
-1. 📌 **Executive Summary**: Brief 1-2 sentence overview of main topics and objectives.
-2. 📋 **Key Discussions & Updates**: Essential points, status reports, or information shared.
-3. ❓ **Questions, Issues & Challenges**: Obstacles, questions raised, or blockers encountered.
-4. 🎯 **Decisions, Next Steps & Action Items**: Key conclusions, agreed solutions, deadlines, and deliverables.
+1. 📌 **Executive Summary**: Brief 1-2 sentence overview of main topics, context, and activities.
+2. 📋 **Key Discussions, Projects & Architecture**: Core topics, tech stacks, ideas, code/game discussions, or updates shared.
+3. ❓ **Notable Questions, Opinions & Perspectives**: Technical debates, design philosophies, questions, or challenges mentioned.
+4. 🎯 **Conclusions & Action Items**: Key takeaways, shared decisions, and ongoing initiatives.
 
 Chat Transcript:
 \"\"\"
 {chat_transcript}
 \"\"\"
 """
+
 
 
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 dexport/0.1.0"
